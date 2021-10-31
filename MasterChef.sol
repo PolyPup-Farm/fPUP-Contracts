@@ -762,7 +762,7 @@ contract BEP20 is Context, IBEP20, Ownable {
     string private _symbol;
     uint8 private _decimals;
 
-    uint256 constant MAXSUPPLY = 100 ether;
+    uint256 constant MAXSUPPLY = 75000 ether;
 
     /**
      * @dev Sets the values for {name} and {symbol}, initializes {decimals} with
@@ -1243,8 +1243,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
     // Info of each pool.
     struct PoolInfo {
         IBEP20 lpToken; // Address of LP token contract.
-        uint256 allocPoint; // How many allocation points assigned to this pool. FPUPs to distribute per block.
-        uint256 lastRewardBlock; // Last block number that FPUPs distribution occurs.
+        uint256 allocPoint; // How many allocation points assigned to this pool. FPUPs to distribute per second.
+        uint256 lastRewardSecond; // Last second that FPUPs distribution occurs.
         uint256 accFpupPerShare; // Accumulated FPUPs per share, times 1e18. See below.
         uint16 depositFeeBP; // Deposit fee in basis points
         uint256 lpSupply;
@@ -1254,8 +1254,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
     fPupToken public fpup;
     // Dev address.
     address public devaddr;
-    // FPUP tokens created per block.
-    uint256 public FpupPerBlock;
+    // FPUP tokens created per second.
+    uint256 public FpupPerSecond;
     // Deposit Fee address
     address public feeAddress;
     // Max emission rate.
@@ -1267,8 +1267,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
     mapping(uint256 => mapping(address => UserInfo)) public userInfo;
     // Total allocation points. Must be the sum of all allocation points in all pools.
     uint256 public totalAllocPoint = 0;
-    // The block number when Fpup mining starts.
-    uint256 public startBlock;
+    // The block timestamp when Fpup mining starts.
+    uint256 public startTime;
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
@@ -1279,7 +1279,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     );
     event SetFeeAddress(address indexed user, address indexed newAddress);
     event SetDevAddress(address indexed user, address indexed newAddress);
-    event UpdateEmissionRate(address indexed user, uint256 FpupPerBlock);
+    event UpdateEmissionRate(address indexed user, uint256 FpupPerSecond);
     event addPool(
         uint256 indexed pid,
         address lpToken,
@@ -1292,20 +1292,20 @@ contract MasterChef is Ownable, ReentrancyGuard {
         uint256 allocPoint,
         uint256 depositFeeBP
     );
-    event UpdateStartBlock(uint256 newStartBlock);
+    event UpdateStartTime(uint256 newStartTime);
 
     constructor(
         fPupToken _fpup,
         address _devaddr,
         address _feeAddress,
-        uint256 _FpupPerBlock,
-        uint256 _startBlock
+        uint256 _FpupPerSecond,
+        uint256 _startTime
     ) public {
         fpup = _fpup;
         devaddr = _devaddr;
         feeAddress = _feeAddress;
-        FpupPerBlock = _FpupPerBlock;
-        startBlock = _startBlock;
+        FpupPerSecond = _FpupPerSecond;
+        startTime = _startTime;
     }
 
     function poolLength() external view returns (uint256) {
@@ -1332,16 +1332,16 @@ contract MasterChef is Ownable, ReentrancyGuard {
         if (_withUpdate) {
             massUpdatePools();
         }
-        uint256 lastRewardBlock = block.number > startBlock
-            ? block.number
-            : startBlock;
+        uint256 lastRewardSecond = block.timestamp > startTime
+            ? block.timestamp
+            : startTime;
         totalAllocPoint = totalAllocPoint.add(_allocPoint);
         poolExistence[_lpToken] = true;
         poolInfo.push(
             PoolInfo({
                 lpToken: _lpToken,
                 allocPoint: _allocPoint,
-                lastRewardBlock: lastRewardBlock,
+                lastRewardSecond: lastRewardSecond,
                 accFpupPerShare: 0,
                 depositFeeBP: _depositFeeBP,
                 lpSupply: 0
@@ -1400,16 +1400,16 @@ contract MasterChef is Ownable, ReentrancyGuard {
         UserInfo storage user = userInfo[_pid][_user];
         uint256 accFpupPerShare = pool.accFpupPerShare;
         if (
-            block.number > pool.lastRewardBlock &&
+            block.timestamp > pool.lastRewardSecond &&
             pool.lpSupply != 0 &&
             totalAllocPoint > 0
         ) {
             uint256 multiplier = getMultiplier(
-                pool.lastRewardBlock,
-                block.number
+                pool.lastRewardSecond,
+                block.timestamp
             );
             uint256 fpupReward = multiplier
-                .mul(FpupPerBlock)
+                .mul(FpupPerSecond)
                 .mul(pool.allocPoint)
                 .div(totalAllocPoint);
             accFpupPerShare = accFpupPerShare.add(
@@ -1430,24 +1430,45 @@ contract MasterChef is Ownable, ReentrancyGuard {
     // Update reward variables of the given pool to be up-to-date.
     function updatePool(uint256 _pid) public {
         PoolInfo storage pool = poolInfo[_pid];
-        if (block.number <= pool.lastRewardBlock) {
+        if (block.timestamp <= pool.lastRewardSecond) {
             return;
         }
         if (pool.lpSupply == 0 || pool.allocPoint == 0) {
-            pool.lastRewardBlock = block.number;
+            pool.lastRewardSecond = block.timestamp;
             return;
         }
-        uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
+        uint256 multiplier = getMultiplier(
+            pool.lastRewardSecond,
+            block.timestamp
+        );
         uint256 fpupReward = multiplier
-            .mul(FpupPerBlock)
+            .mul(FpupPerSecond)
             .mul(pool.allocPoint)
             .div(totalAllocPoint);
-        fpup.mint(devaddr, fpupReward.div(10));
-        fpup.mint(address(this), fpupReward);
-        pool.accFpupPerShare = pool.accFpupPerShare.add(
-            fpupReward.mul(1e18).div(pool.lpSupply)
+
+        uint256 devReward = fpupReward.div(10);
+        uint256 totalRewards = fpup.totalSupply().add(devReward).add(
+            fpupReward
         );
-        pool.lastRewardBlock = block.number;
+
+        if (totalRewards <= fpup.maxSupply()) {
+            // mint as normal as not at maxSupply
+            fpup.mint(devaddr, fpupReward.div(10));
+            fpup.mint(address(this), fpupReward);
+        } else {
+            // mint the difference only to MC, update fpupReward
+            fpupReward = fpup.maxSupply().sub(fpup.totalSupply());
+            fpup.mint(address(this), fpupReward);
+        }
+
+        if (fpupReward != 0) {
+            // only calculate and update if fpupReward is non 0
+            pool.accFpupPerShare = pool.accFpupPerShare.add(
+                fpupReward.mul(1e18).div(pool.lpSupply)
+            );
+        }
+
+        pool.lastRewardSecond = block.timestamp;
     }
 
     // Deposit LP tokens to MasterChef for Fpup allocation.
@@ -1554,30 +1575,30 @@ contract MasterChef is Ownable, ReentrancyGuard {
     }
 
     //Pancake has to add hidden dummy pools inorder to alter the emission, here we make it simple and transparent to all.
-    function updateEmissionRate(uint256 _FpupPerBlock) external onlyOwner {
-        require(_FpupPerBlock <= MAX_EMISSION_RATE, "Emission too high");
+    function updateEmissionRate(uint256 _FpupPerSecond) external onlyOwner {
+        require(_FpupPerSecond <= MAX_EMISSION_RATE, "Emission too high");
         massUpdatePools();
-        FpupPerBlock = _FpupPerBlock;
-        emit UpdateEmissionRate(msg.sender, _FpupPerBlock);
+        FpupPerSecond = _FpupPerSecond;
+        emit UpdateEmissionRate(msg.sender, _FpupPerSecond);
     }
 
     // Only update before start of farm
-    function updateStartBlock(uint256 _newStartBlock) external onlyOwner {
+    function updateStartTime(uint256 _newStartTime) external onlyOwner {
         require(
-            block.number < startBlock,
-            "cannot change start block if farm has already started"
+            block.timestamp < startTime,
+            "cannot change start time if farm has already started"
         );
         require(
-            block.number < _newStartBlock,
-            "cannot set start block in the past"
+            block.timestamp < _newStartTime,
+            "cannot set start time in the past"
         );
         uint256 length = poolInfo.length;
         for (uint256 pid = 0; pid < length; ++pid) {
             PoolInfo storage pool = poolInfo[pid];
-            pool.lastRewardBlock = _newStartBlock;
+            pool.lastRewardSecond = _newStartTime;
         }
-        startBlock = _newStartBlock;
+        startTime = _newStartTime;
 
-        emit UpdateStartBlock(startBlock);
+        emit UpdateStartTime(startTime);
     }
 }
