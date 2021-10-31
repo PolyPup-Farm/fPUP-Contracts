@@ -702,7 +702,7 @@ contract BEP20 is Context, IBEP20, Ownable {
     string private _symbol;
     uint8 private _decimals;
 
-    uint256 constant MAXSUPPLY = 100 ether;
+    uint256 constant MAXSUPPLY = 75000 ether;
 
     /**
      * @dev Sets the values for {name} and {symbol}, initializes {decimals} with
