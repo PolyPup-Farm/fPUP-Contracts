@@ -952,8 +952,6 @@ contract fPupVault is Ownable, Pausable {
 
     IMasterChef public immutable masterchef;
 
-    address public burnadd = 0x000000000000000000000000000000000000dEaD;
-
     mapping(address => UserInfo) public userInfo;
 
     uint256 public totalShares;
@@ -1070,9 +1068,10 @@ contract fPupVault is Ownable, Pausable {
      * @dev Only possible when contract not paused.
      */
     function harvest() external notContract whenNotPaused {
+        uint256 beforeBal = available();
         IMasterChef(masterchef).deposit(0, 0);
+        uint256 bal = available().sub(beforeBal);
 
-        uint256 bal = available();
         uint256 currentPerformanceFee = bal.mul(performanceFee).div(10000);
         token.safeTransfer(treasury, currentPerformanceFee);
 
@@ -1161,6 +1160,7 @@ contract fPupVault is Ownable, Pausable {
      */
     function emergencyWithdraw() external onlyAdmin {
         IMasterChef(masterchef).emergencyWithdraw(0);
+        _pause();
     }
 
     /**
